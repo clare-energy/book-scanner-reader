@@ -32,7 +32,10 @@ app.post("/ocr", upload.single("image"), async (req, res) => {
     const result = await transcribePage(req.file.buffer, req.file.mimetype);
     res.json(result);
   } catch (err) {
-    console.error("OCR failed:", err);
+    console.error("OCR failed:", err.status, err.message, err);
+    if (err.status === 429) {
+      return res.status(429).json({ error: "OCR service is busy, wait a few seconds and retry." });
+    }
     res.status(502).json({ error: "OCR request failed, please retry" });
   }
 });
@@ -45,6 +48,18 @@ app.get(/^(?!\/(ocr|health)).*/, (_req, res) => {
       res.status(503).send("Frontend build not found. Run the frontend build before starting the server.");
     }
   });
+});
+
+// Without this, a multer error (e.g. LIMIT_FILE_SIZE) bypasses every JSON
+// error response above and falls through to Express's default HTML error
+// page — which the frontend can't parse, so it shows a generic message
+// with no clue what actually happened.
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled error:", err);
+  if (err?.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ error: "Photo is too large. Try again, or lower your camera resolution." });
+  }
+  res.status(500).json({ error: "Unexpected server error, please retry." });
 });
 
 const PORT = process.env.PORT || 3000;
