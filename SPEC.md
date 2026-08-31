@@ -1,0 +1,60 @@
+# Spec: Physical Book Reader PWA
+
+## Overview
+A mobile-first Progressive Web App (installed via "Add to Home Screen," no app store submission) that lets a low-vision user photograph physical book pages, converts them to text via cloud OCR, accumulates pages into a growing EPUB per book, and reads them aloud with phrase-level navigation. Built for Android/Chrome as the primary target.
+
+## Core user flow
+1. User opens app → sees **Library** (list of in-progress books)
+2. User taps a book (or creates a new one) → enters **Scan mode**
+3. Camera capture → client-side preprocessing (crop/deskew/contrast) → send to backend OCR (requires connectivity)
+4. OCR text returned → appended to the current chapter, or starts a new chapter if the user marked one
+5. User taps **Read** → phrase-by-phrase playback via Web Speech API, resuming wherever they left off
+6. User can return to Library, resume any book, or scan the next page later as a separate session
+
+## 1. Book management (Library)
+- Persistent list of books, each with: title (user-editable, default "Untitled — [date]"), page count, chapter count, created/last-modified date, last read position (chapter + phrase index)
+- Actions per book: rename, delete, continue scanning, resume reading, export/share EPUB
+- Storage: IndexedDB holds book metadata and the incrementally-maintained EPUB file itself (see §3)
+
+## 2. Scanning & OCR
+- Capture via `<input type="file" capture="environment">` or `getUserMedia`
+- Client-side preprocessing: OpenCV.js or jscanify — edge detection, perspective correction, contrast/binarization — before upload
+- POST preprocessed image to Render-hosted `/ocr` endpoint
+- Backend (Render, Node/Express or Python/FastAPI): holds OCR provider API key as an env var, calls the cloud OCR service (Claude Code's choice of provider), returns cleaned text; also handles hyphenation rejoin and header/footer/page-number stripping where detectable
+- Stateless backend — no server-side data persistence; all book/EPUB data lives client-side
+- **Scanning requires an active connection** — no offline queueing for v1. Fail clearly if the OCR call can't complete (retry, don't silently drop the page)
+- **OCR quality control**: pages append automatically and silently by default. If the OCR provider reports low confidence for a page, the app speaks that page's recognized text aloud immediately (via the same TTS used for reading) and offers "keep" / "retry photo" so the user can catch garbled text by ear — visual proofreading isn't viable for a low-vision user, so this check is audio-only
+
+## 3. EPUB assembly
+- The EPUB file is the source of truth and is **updated incrementally** as pages are added — not regenerated from separate stored text at export time
+- **Chapter model**: consecutive scanned pages append into the current chapter by default. User has an explicit "New Chapter" action in Scan mode that closes the current chapter and starts the next
+- Export/share the live EPUB at any point (e.g. to hand off to @Voice via Android share sheet)
+
+## 4. Reading & phrase navigation
+- Text segmented into phrases via `Intl.Segmenter` (sentence granularity, with room to go finer if sentences feel too coarse)
+- Playback state machine: current book + chapter + phrase index; `SpeechSynthesisUtterance` queue with `onend` auto-advance
+- Skip forward/back bound to on-screen controls and Media Session API (`nexttrack`/`previoustrack`) for Bluetooth remote compatibility
+- Pause/resume: attempt native `speechSynthesis.pause()/resume()`, but implement cancel+resume-from-phrase-start as a fallback given known Android Chrome reliability issues with native pause
+- Resume position persisted per book in IndexedDB
+- **v1 is audio-only** — no on-screen text display or highlighting (explicitly deferred, not a blocker)
+
+## 5. Backend (Render)
+- Single small service, one `/ocr` endpoint: image in, text out
+- OCR provider and SDK choice left to Claude Code
+- API key stored in Render environment variables, never exposed client-side
+- Also serves the built frontend as static files — one Render service hosts both the PWA and the `/ocr` API
+
+## 6. UI accessibility
+- Full accessible UI across every screen (Library, Scan mode, menus, settings) — not just the book-reading feature
+- Proper ARIA labels/roles and TalkBack-friendly navigation throughout
+- Large touch targets and a high-contrast theme
+- This is distinct from book-content reading (§4), which is audio-only by design; §6 covers making the app's own controls usable by a low-vision/screen-reader user
+
+## Technical stack
+- Frontend: left to Claude Code's judgment (likely React + Vite, for PWA tooling, an IndexedDB wrapper, and the Web Speech/Media Session APIs)
+- Backend: Render, Node/Express or Python/FastAPI (Claude Code's choice), serving both `/ocr` and the static frontend build
+
+## Explicitly out of scope for v1
+- Offline scanning/OCR queueing
+- On-screen text display or phrase highlighting
+- Multi-user/account system (single local user, local storage only)
