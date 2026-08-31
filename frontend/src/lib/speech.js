@@ -46,6 +46,7 @@ export class PlaybackController {
     this.phraseIndex = clamp(startPosition?.phraseIndex ?? 0, 0, this._chapterLength(this.chapterIndex) - 1)
     this.isPlaying = false
     this.handlers = handlers
+    this._playToken = 0
     this._setupMediaSession()
   }
 
@@ -85,13 +86,18 @@ export class PlaybackController {
       return
     }
     window.speechSynthesis.cancel()
+    const token = ++this._playToken
     const utterance = new SpeechSynthesisUtterance(text)
+    // Cancelling the previous utterance (below, and on next/previous/pause)
+    // fires ITS onend/onerror asynchronously. Without the token guard, that
+    // stale event would trigger a second, spurious _advanceOrFinish() on
+    // top of the one the navigation action already did.
     utterance.onend = () => {
-      if (!this.isPlaying) return
+      if (!this.isPlaying || token !== this._playToken) return
       this._advanceOrFinish()
     }
     utterance.onerror = () => {
-      if (!this.isPlaying) return
+      if (!this.isPlaying || token !== this._playToken) return
       this._advanceOrFinish()
     }
     window.speechSynthesis.speak(utterance)
