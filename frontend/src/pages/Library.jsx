@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listBooks, createBook, renameBook, deleteBook, getEpubBlob } from '../lib/db.js'
+import { listBooks, createBook, renameBook, deleteBook, fetchEpubBlob } from '../lib/api.js'
+import { useAuth } from '../lib/AuthContext.jsx'
 
 export default function Library() {
   const navigate = useNavigate()
+  const { user, logout } = useAuth()
   const [books, setBooks] = useState(null)
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
@@ -42,9 +44,11 @@ export default function Library() {
   }
 
   async function handleExport(book) {
-    const blob = await getEpubBlob(book.id)
-    if (!blob) {
-      setStatus('No pages scanned yet, nothing to export.')
+    let blob
+    try {
+      blob = await fetchEpubBlob(book.id)
+    } catch (err) {
+      setStatus(err.message || 'Export failed.')
       return
     }
     const file = new File([blob], `${book.title}.epub`, { type: 'application/epub+zip' })
@@ -68,6 +72,9 @@ export default function Library() {
     <div className="stack">
       <div className="top-bar">
         <h1>Library</h1>
+        <button onClick={logout} aria-label={`Log out of ${user?.email ?? 'your account'}`}>
+          Log Out
+        </button>
       </div>
 
       <button className="primary" onClick={handleNewBook}>
@@ -105,8 +112,8 @@ export default function Library() {
               <>
                 <div className="book-card__title">{book.title}</div>
                 <div className="book-card__meta">
-                  {book.pageCount} page{book.pageCount === 1 ? '' : 's'} · {book.chapters.length}{' '}
-                  chapter{book.chapters.length === 1 ? '' : 's'}
+                  {book.pageCount} page{book.pageCount === 1 ? '' : 's'} · {book.chapterCount}{' '}
+                  chapter{book.chapterCount === 1 ? '' : 's'}
                 </div>
                 <div className="row">
                   <button onClick={() => navigate(`/book/${book.id}/scan`)}>Scan pages</button>

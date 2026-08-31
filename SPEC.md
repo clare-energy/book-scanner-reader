@@ -14,35 +14,36 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 ## 1. Book management (Library)
 - Persistent list of books, each with: title (user-editable, default "Untitled — [date]"), page count, chapter count, created/last-modified date, last read position (chapter + phrase index)
 - Actions per book: rename, delete, continue scanning, resume reading, export/share EPUB
-- Storage: IndexedDB holds book metadata and the incrementally-maintained EPUB file itself (see §3)
+- Storage: books belong to the signed-in user and live server-side in Postgres (see §7) — a user only ever sees their own books
 
 ## 2. Scanning & OCR
 - Capture via `<input type="file" capture="environment">` or `getUserMedia`
 - Client-side preprocessing: OpenCV.js or jscanify — edge detection, perspective correction, contrast/binarization — before upload
 - POST preprocessed image to Render-hosted `/ocr` endpoint
-- Backend (Render, Node/Express or Python/FastAPI): holds OCR provider API key as an env var, calls the cloud OCR service (Claude Code's choice of provider), returns cleaned text; also handles hyphenation rejoin and header/footer/page-number stripping where detectable
-- Stateless backend — no server-side data persistence; all book/EPUB data lives client-side
+- Backend (Render, Node/Express): holds OCR provider API key as an env var, calls the cloud OCR service (Claude API vision), returns cleaned text; also handles hyphenation rejoin and header/footer/page-number stripping where detectable
+- `/ocr` requires a signed-in session, same as every other book-related endpoint — it's a direct proxy onto a paid API key and must not be an open endpoint
 - **Scanning requires an active connection** — no offline queueing for v1. Fail clearly if the OCR call can't complete (retry, don't silently drop the page)
 - **OCR quality control**: pages append automatically and silently by default. If the OCR provider reports low confidence for a page, the app speaks that page's recognized text aloud immediately (via the same TTS used for reading) and offers "keep" / "retry photo" so the user can catch garbled text by ear — visual proofreading isn't viable for a low-vision user, so this check is audio-only
 
 ## 3. EPUB assembly
-- The EPUB file is the source of truth and is **updated incrementally** as pages are added — not regenerated from separate stored text at export time
+- Book text (chapters/paragraphs) is the source of truth, stored server-side; the EPUB itself is built on demand from that data when exported, not stored as a separate artifact that could drift out of sync
 - **Chapter model**: consecutive scanned pages append into the current chapter by default. User has an explicit "New Chapter" action in Scan mode that closes the current chapter and starts the next
-- Export/share the live EPUB at any point (e.g. to hand off to @Voice via Android share sheet)
+- Export/share the EPUB at any point (e.g. to hand off to @Voice via Android share sheet)
 
 ## 4. Reading & phrase navigation
 - Text segmented into phrases via `Intl.Segmenter` (sentence granularity, with room to go finer if sentences feel too coarse)
 - Playback state machine: current book + chapter + phrase index; `SpeechSynthesisUtterance` queue with `onend` auto-advance
 - Skip forward/back bound to on-screen controls and Media Session API (`nexttrack`/`previoustrack`) for Bluetooth remote compatibility
 - Pause/resume: attempt native `speechSynthesis.pause()/resume()`, but implement cancel+resume-from-phrase-start as a fallback given known Android Chrome reliability issues with native pause
-- Resume position persisted per book in IndexedDB
+- Resume position persisted per book server-side
 - **v1 is audio-only** — no on-screen text display or highlighting (explicitly deferred, not a blocker)
 
 ## 5. Backend (Render)
-- Single small service, one `/ocr` endpoint: image in, text out
+- `/ocr` endpoint: image in, text out
+- `/auth/*` and `/books/*` endpoints for accounts and book CRUD (see §7)
 - OCR provider and SDK choice left to Claude Code
-- API key stored in Render environment variables, never exposed client-side
-- Also serves the built frontend as static files — one Render service hosts both the PWA and the `/ocr` API
+- API keys and secrets stored in Render environment variables, never exposed client-side
+- Also serves the built frontend as static files — one Render service hosts the PWA, the API, and (via a linked Render Postgres database) storage
 
 ## 6. UI accessibility
 - Full accessible UI across every screen (Library, Scan mode, menus, settings) — not just the book-reading feature
@@ -50,11 +51,16 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 - Large touch targets and a high-contrast theme
 - This is distinct from book-content reading (§4), which is audio-only by design; §6 covers making the app's own controls usable by a low-vision/screen-reader user
 
+## 7. Accounts & multi-user storage
+- Real accounts: anyone can sign up, log in, and only ever sees their own books
+- Auth: email + password, hashed server-side; session cookie (httpOnly, secure in production), not a client-stored token
+- Storage: Postgres (Render-managed). `users` table for accounts; `books` table (title, chapters/paragraphs as JSON, page count, reading position) scoped by `user_id` — every book query is filtered by the signed-in user, and a book that exists but belongs to someone else 404s rather than 403s, so IDs don't leak who owns what
+- A logged-out user is redirected to a Login/Sign-up screen before seeing the Library
+
 ## Technical stack
-- Frontend: left to Claude Code's judgment (likely React + Vite, for PWA tooling, an IndexedDB wrapper, and the Web Speech/Media Session APIs)
-- Backend: Render, Node/Express or Python/FastAPI (Claude Code's choice), serving both `/ocr` and the static frontend build
+- Frontend: React + Vite (PWA tooling, Web Speech/Media Session APIs); no client-side data storage — the backend is the source of truth
+- Backend: Render, Node/Express, serving `/ocr`, `/auth/*`, `/books/*`, and the static frontend build, backed by a Render Postgres database
 
 ## Explicitly out of scope for v1
 - Offline scanning/OCR queueing
 - On-screen text display or phrase highlighting
-- Multi-user/account system (single local user, local storage only)

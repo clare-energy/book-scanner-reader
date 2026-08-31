@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getBook, setLastRead } from '../lib/db.js'
+import { getBook, setLastRead } from '../lib/api.js'
 import { buildPhraseIndex, PlaybackController } from '../lib/speech.js'
 
 export default function Reader() {
@@ -17,17 +17,21 @@ export default function Reader() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const b = await getBook(id)
-      if (!b || cancelled) return
-      const phrases = buildPhraseIndex(b)
-      setBook(b)
-      setPhrasesByChapter(phrases)
-      setPosition(b.lastRead ?? { chapterIndex: 0, phraseIndex: 0 })
+      try {
+        const b = await getBook(id)
+        if (cancelled) return
+        const phrases = buildPhraseIndex(b)
+        setBook(b)
+        setPhrasesByChapter(phrases)
+        setPosition(b.lastRead ?? { chapterIndex: 0, phraseIndex: 0 })
+      } catch {
+        if (!cancelled) navigate('/')
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, navigate])
 
   useEffect(() => {
     if (!book || !phrasesByChapter) return
@@ -38,7 +42,8 @@ export default function Reader() {
       {
         onPosition: (pos) => {
           setPosition(pos)
-          setLastRead(book.id, pos.chapterIndex, pos.phraseIndex)
+          // Best-effort: losing a position save shouldn't interrupt playback.
+          setLastRead(book.id, pos.chapterIndex, pos.phraseIndex).catch(() => {})
         },
         onPlayingChange: setIsPlaying,
         onFinished: () => setFinished(true),

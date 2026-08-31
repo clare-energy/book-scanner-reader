@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getBook, appendPageText, startNewChapter } from '../lib/db.js'
+import { getBook, appendPageText, startNewChapter } from '../lib/api.js'
 import { preprocessPageImage } from '../lib/imagePrep.js'
 import { ocrImage } from '../lib/ocrClient.js'
 import { speakOnce, stopSpeaking } from '../lib/speech.js'
@@ -17,12 +17,11 @@ export default function ScanMode() {
   const [pendingReview, setPendingReview] = useState(null)
 
   const refresh = useCallback(async () => {
-    const b = await getBook(id)
-    if (!b) {
+    try {
+      setBook(await getBook(id))
+    } catch {
       navigate('/')
-      return
     }
-    setBook(b)
   }, [id, navigate])
 
   useEffect(() => {
