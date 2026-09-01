@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listBooks, createBook, renameBook, deleteBook, fetchEpubBlob } from '../lib/api.js'
 import { useAuth } from '../lib/AuthContext.jsx'
+import { getAvailableVoices, subscribeToVoices } from '../lib/speech.js'
 
 export default function Library() {
   const navigate = useNavigate()
@@ -10,6 +11,7 @@ export default function Library() {
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
   const [status, setStatus] = useState('')
+  const [voices, setVoices] = useState(() => getAvailableVoices())
 
   const refresh = useCallback(async () => {
     setBooks(await listBooks())
@@ -18,6 +20,11 @@ export default function Library() {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    setVoices(getAvailableVoices())
+    return subscribeToVoices(() => setVoices(getAvailableVoices()))
+  }, [])
 
   async function handleNewBook() {
     const book = await createBook()
@@ -138,6 +145,23 @@ export default function Library() {
           </li>
         ))}
       </ul>
+
+      <details>
+        <summary>Voice options on this device ({voices.length})</summary>
+        {voices.length === 0 ? (
+          <p>No voices reported yet, or this browser doesn't expose a voice list.</p>
+        ) : (
+          <ul>
+            {voices.map((v) => (
+              <li key={v.voiceURI}>
+                {v.name} — {v.lang}
+                {v.default ? ' · default' : ''}
+                {v.localService ? '' : ' · network'}
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </div>
   )
 }

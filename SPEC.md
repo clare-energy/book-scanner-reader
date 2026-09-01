@@ -15,6 +15,7 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 - Persistent list of books, each with: title (user-editable, default "Untitled — [date]"), page count, chapter count, created/last-modified date, last read position (chapter + phrase index)
 - Actions per book: rename, delete, continue scanning, resume reading, export/share EPUB
 - Storage: books belong to the signed-in user and live server-side in Postgres (see §7) — a user only ever sees their own books
+- The Library also shows a list of the device's available `SpeechSynthesisVoice` options (name, language, default/network) in a collapsible panel, for troubleshooting/awareness — no voice *selection* UI yet, playback always uses the browser's default voice
 
 ## 2. Scanning & OCR
 - Capture via `<input type="file" capture="environment">` or `getUserMedia`
@@ -35,7 +36,6 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 - Text segmented into phrases via `Intl.Segmenter` (sentence granularity, with room to go finer if sentences feel too coarse), with a merge pass afterward: `Intl.Segmenter` has no notion of abbreviations, so "Mr. Goenka" or "S. N. Goenka" would otherwise split into separate phrases at each period, and each phrase becomes its own utterance with an audible gap. Phrases ending in a known title/abbreviation (Mr., Dr., etc., ...) or a lone initial (a single letter + period) get merged into the next phrase
 - Playback state machine: current book + chapter + phrase index; `SpeechSynthesisUtterance` queue with `onend` auto-advance
 - Before each utterance, the text is separately normalized for speech (independent of the phrase-merge above, which only fixes phrase *boundaries*): known titles expand to full words ("Mr." → "Mister", "Dr." → "Doctor", ...) and periods after space-separated lone initials are stripped ("S. N. Goenka" → "S N Goenka") — otherwise the speech engine still inserts its own pause at the literal "." even within one merged utterance
-- The Reader shows a list of the device's available `SpeechSynthesisVoice` options (name, language, default/network) in a collapsible panel, for troubleshooting/awareness — no voice *selection* UI yet, playback always uses the browser's default voice
 - Skip forward/back by phrase, and separately by whole scanned page (jumps to the first phrase of the next/previous page; crosses a chapter boundary at the first/last page of a chapter rather than stopping) — both bound to on-screen controls; phrase skip is also bound to the Media Session API (`nexttrack`/`previoustrack`) for Bluetooth remote compatibility
 - Pause/resume: attempt native `speechSynthesis.pause()/resume()`, but implement cancel+resume-from-phrase-start as a fallback given known Android Chrome reliability issues with native pause
 - Resume position persisted per book server-side, but reopening a book always starts from the first phrase of the page it was last on, not the exact phrase — mid-page resume was confusing
