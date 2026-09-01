@@ -1,85 +1,119 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { ImageAnnotatorClient } from "@google-cloud/vision";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-const MODEL = "claude-sonnet-5";
-
-const SYSTEM_PROMPT = `You transcribe a single photographed page from a physical book for a low-vision \
-user who will have the text read aloud by text-to-speech software. Accuracy matters more than speed.
-
-Rules:
-- Transcribe all body text exactly as printed, preserving paragraph breaks as blank lines.
-- Rejoin words that are hyphenated across a line break into a single word (remove the hyphen).
-- Do NOT include running headers, running footers, or standalone page numbers.
-- Do NOT add any commentary, titles, or text that is not on the page.
-- If the image is blank, blurry, upside down, or otherwise has no legible body text, return an \
-empty string for "text" and set "lowConfidence" to true.
-- Set "lowConfidence" to true if any word or passage is illegible, ambiguous, or you are not \
-confident you transcribed it correctly. List a short excerpt of each such passage in \
-"uncertainPassages".`;
-
-const TRANSCRIBE_TOOL = {
-  name: "submit_transcription",
-  description: "Submit the transcription of the photographed book page.",
-  input_schema: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description: "The transcribed body text of the page.",
+let client;
+function getClient() {
+  if (!client) {
+    client = new ImageAnnotatorClient({
+      projectId: process.env.GOOGLE_PROJECT_ID,
+      credentials: {
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
       },
-      lowConfidence: {
-        type: "boolean",
-        description: "true if any part of the page was illegible or you are unsure of the transcription",
-      },
-      uncertainPassages: {
-        type: "array",
-        items: { type: "string" },
-        description: "Short excerpts of passages you were unsure about (only when lowConfidence is true)",
-      },
-    },
-    required: ["text", "lowConfidence"],
-  },
-};
+    });
+  }
+  return client;
+}
+
+const HEADER_FOOTER_MARGIN = 0.08; // top/bottom 8% of the page
+const HEADER_FOOTER_MAX_CHARS = 60;
+const PAGE_NUMBER_RE = /^\d{1,4}$/;
+const LOW_CONFIDENCE_THRESHOLD = 0.88;
+const UNCERTAIN_WORD_THRESHOLD = 0.6;
+
+function blockText(block) {
+  // Rejoins words split by a line-end hyphen and turns other line breaks
+  // within a paragraph into spaces, so each paragraph reads as continuous
+  // prose (matching how the app splits pages into paragraphs on blank
+  // lines).
+  let text = "";
+  for (const paragraph of block.paragraphs ?? []) {
+    let paragraphText = "";
+    for (const word of paragraph.words ?? []) {
+      for (const symbol of word.symbols ?? []) {
+        const breakType = symbol.property?.detectedBreak?.type;
+        if (symbol.text === "-" && breakType === "HYPHEN") {
+          continue; // drop the hyphen; word continues with the next symbol
+        }
+        paragraphText += symbol.text;
+        if (breakType === "SPACE" || breakType === "SURE_SPACE") {
+          paragraphText += " ";
+        } else if (breakType === "EOL_SURE_SPACE" || breakType === "LINE_BREAK") {
+          paragraphText += " ";
+        }
+      }
+    }
+    paragraphText = paragraphText.trim();
+    if (paragraphText) text += (text ? "\n\n" : "") + paragraphText;
+  }
+  return text;
+}
+
+function blockYRatio(block, pageHeight) {
+  const ys = (block.boundingBox?.vertices ?? []).map((v) => v.y ?? 0);
+  if (!ys.length || !pageHeight) return 0.5;
+  const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
+  return avgY / pageHeight;
+}
+
+function looksLikeHeaderOrFooter(text, yRatio) {
+  if (PAGE_NUMBER_RE.test(text)) return true;
+  const nearEdge = yRatio < HEADER_FOOTER_MARGIN || yRatio > 1 - HEADER_FOOTER_MARGIN;
+  return nearEdge && text.length <= HEADER_FOOTER_MAX_CHARS;
+}
+
+function wordConfidences(page) {
+  const confidences = [];
+  for (const block of page.blocks ?? []) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const word of paragraph.words ?? []) {
+        if (typeof word.confidence === "number") confidences.push(word.confidence);
+      }
+    }
+  }
+  return confidences;
+}
 
 /**
  * @param {Buffer} imageBuffer
- * @param {string} mimeType
  * @returns {Promise<{ text: string, lowConfidence: boolean, uncertainPassages: string[] }>}
  */
-export async function transcribePage(imageBuffer, mimeType) {
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    tools: [TRANSCRIBE_TOOL],
-    tool_choice: { type: "tool", name: "submit_transcription" },
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: mimeType,
-              data: imageBuffer.toString("base64"),
-            },
-          },
-          {
-            type: "text",
-            text: "Transcribe this book page.",
-          },
-        ],
-      },
-    ],
+export async function transcribePage(imageBuffer) {
+  const [result] = await getClient().documentTextDetection({
+    image: { content: imageBuffer },
   });
 
-  const toolUse = response.content.find((block) => block.type === "tool_use");
-  if (!toolUse) {
-    throw new Error("Model did not return a transcription");
+  const page = result.fullTextAnnotation?.pages?.[0];
+  if (!page) {
+    return { text: "", lowConfidence: true, uncertainPassages: [] };
   }
 
-  const { text = "", lowConfidence = false, uncertainPassages = [] } = toolUse.input;
-  return { text, lowConfidence, uncertainPassages };
+  const kept = [];
+  for (const block of page.blocks ?? []) {
+    const text = blockText(block);
+    if (!text) continue;
+    if (looksLikeHeaderOrFooter(text, blockYRatio(block, page.height))) continue;
+    kept.push(text);
+  }
+
+  const confidences = wordConfidences(page);
+  const avgConfidence = confidences.length
+    ? confidences.reduce((a, b) => a + b, 0) / confidences.length
+    : 0;
+
+  const uncertainPassages = [];
+  for (const block of page.blocks ?? []) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const word of paragraph.words ?? []) {
+        if (word.confidence < UNCERTAIN_WORD_THRESHOLD) {
+          uncertainPassages.push((word.symbols ?? []).map((s) => s.text).join(""));
+        }
+      }
+    }
+  }
+
+  return {
+    text: kept.join("\n\n"),
+    lowConfidence: confidences.length === 0 || avgConfidence < LOW_CONFIDENCE_THRESHOLD,
+    uncertainPassages: uncertainPassages.slice(0, 10),
+  };
 }

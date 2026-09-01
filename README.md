@@ -10,8 +10,8 @@ and each only sees their own books.
 - `backend/` — Express service. `/auth/*` (email+password, session cookies)
   and `/books/*` (CRUD, page/chapter append, EPUB export) are backed by
   Postgres — books belong to a user and only that user can read/write them.
-  `/ocr` (image in, transcribed text out, via the Claude API's vision
-  capability) is also session-gated. Also serves the built frontend in
+  `/ocr` (image in, transcribed text out, via Google Cloud Vision) is also
+  session-gated. Also serves the built frontend in
   production, so the whole app is one Render service.
 - `frontend/` — React + Vite PWA. No local storage of book data anymore —
   the backend is the source of truth; the app just calls the API.
@@ -26,7 +26,7 @@ docker run -d --name book-reader-pg -p 5432:5432 -e POSTGRES_PASSWORD=dev -e POS
 **Backend** (in one terminal):
 ```
 cd backend
-cp .env.example .env   # add ANTHROPIC_API_KEY, DATABASE_URL, SESSION_SECRET
+cp .env.example .env   # add GOOGLE_PROJECT_ID/GOOGLE_CLIENT_EMAIL/GOOGLE_PRIVATE_KEY, DATABASE_URL, SESSION_SECRET
 npm install
 npm run dev             # listens on :3000, creates its tables on startup
 ```
@@ -49,15 +49,15 @@ The backend serves the built frontend, so build the frontend first:
 ```
 cd frontend && npm install && npm run build
 cd ../backend && npm install
-ANTHROPIC_API_KEY=... DATABASE_URL=... SESSION_SECRET=... NODE_ENV=production PORT=3000 npm start
+GOOGLE_PROJECT_ID=... GOOGLE_CLIENT_EMAIL=... GOOGLE_PRIVATE_KEY=... DATABASE_URL=... SESSION_SECRET=... NODE_ENV=production PORT=3000 npm start
 ```
 
 ## Deploying to Render
 
 `render.yaml` defines a Blueprint: the web service plus a managed Postgres
 database, wired together automatically. In the Render dashboard: **New +** →
-**Blueprint** → select this repo → it'll prompt for `ANTHROPIC_API_KEY` (the
-only secret not auto-generated) → deploy.
+**Blueprint** → select this repo → it'll prompt for the three Google Cloud
+values (the secrets not auto-generated) → deploy.
 
 Note: Render's **free Postgres plan expires after 30 days** and gets deleted.
 Fine for testing; move to a paid plan before relying on it for real.
@@ -68,11 +68,20 @@ Fine for testing; move to a paid plan before relying on it for real.
   Postgres-backed store (`connect-pg-simple`) so sessions survive restarts/
   redeploys. Every `/books*` query is scoped by `user_id`, and a book owned
   by someone else 404s rather than 403s, so IDs don't leak existence.
-- **OCR**: the backend calls the Claude API (vision) to transcribe each page,
-  rejoin hyphenation, and strip headers/footers/page numbers, via a forced
-  tool call so the response is structured JSON (`text`, `lowConfidence`,
-  `uncertainPassages`) rather than freeform text. Gated behind login since
-  it's a direct proxy onto a paid API key.
+- **OCR**: the backend uses Google Cloud Vision's `documentTextDetection`,
+  reconstructing text from the response's block/paragraph/word/symbol
+  structure to rejoin line-end hyphens and turn other in-paragraph line
+  breaks into spaces. Blocks that look like a header/footer/page number
+  (short, near the top/bottom edge, or a bare number) are dropped. Started
+  out on Claude's vision API, but that turned into a fundamental mismatch
+  for this use case: Claude has copyright guardrails against reproducing
+  large verbatim chunks of text, which is *exactly* what OCR-ing a real book
+  page requires — some pages got refused outright (surfacing as a generic
+  "OCR request failed"). A dedicated OCR service doesn't have that failure
+  mode; it has no concept of "copyrighted text," it just reads pixels.
+  `lowConfidence` comes from Vision's own per-word confidence scores rather
+  than a model self-report. Gated behind login since it's a direct proxy
+  onto a paid API.
 - **EPUB**: built server-side on demand (`GET /books/:id/epub`) from the
   book's `chapters` JSONB column — valid EPUB3 (OPF manifest/spine,
   nav.xhtml, and an NCX for wider reader compatibility), generated fresh
@@ -98,7 +107,8 @@ the dev environment, so the following are unverified:
   browser (built and lint-clean, but not exercised against a real photo).
 - `speechSynthesis` voice availability/behavior on Android Chrome, and the
   pause/resume fallback under real conditions.
-- Actual OCR quality/latency from the Claude API on real book-page photos.
+- Actual OCR quality/latency from Google Cloud Vision on real book-page
+  photos (confirmed working for at least one real page during dev testing).
 - The full Login/Library/Scan/Reader UI flow in an actual browser (verified
   via API calls and code review, not a rendered page).
 

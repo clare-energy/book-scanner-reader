@@ -51,16 +51,17 @@ app.post("/ocr", requireAuth, upload.single("image"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No image uploaded" });
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
     return res.status(500).json({ error: "Server is not configured with an OCR API key" });
   }
 
   try {
-    const result = await transcribePage(req.file.buffer, req.file.mimetype);
+    const result = await transcribePage(req.file.buffer);
     res.json(result);
   } catch (err) {
-    console.error("OCR failed:", err.status, err.message, err);
-    if (err.status === 429) {
+    console.error("OCR failed:", err.code, err.message, err);
+    if (err.code === 8) {
+      // gRPC RESOURCE_EXHAUSTED
       return res.status(429).json({ error: "OCR service is busy, wait a few seconds and retry." });
     }
     res.status(502).json({ error: "OCR request failed, please retry" });

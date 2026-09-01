@@ -20,7 +20,7 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 - Capture via `<input type="file" capture="environment">` or `getUserMedia`
 - Client-side preprocessing: OpenCV.js or jscanify — edge detection, perspective correction, contrast/binarization — before upload
 - POST preprocessed image to Render-hosted `/ocr` endpoint
-- Backend (Render, Node/Express): holds OCR provider API key as an env var, calls the cloud OCR service (Claude API vision), returns cleaned text; also handles hyphenation rejoin and header/footer/page-number stripping where detectable
+- Backend (Render, Node/Express): holds OCR provider credentials as env vars, calls the cloud OCR service (Google Cloud Vision — a dedicated OCR API, not a general-purpose LLM, deliberately: an LLM vision model's built-in guardrails against reproducing copyrighted text verbatim conflict directly with OCR-ing real book pages), returns cleaned text; also handles hyphenation rejoin and header/footer/page-number stripping where detectable
 - `/ocr` requires a signed-in session, same as every other book-related endpoint — it's a direct proxy onto a paid API key and must not be an open endpoint
 - **Scanning requires an active connection** — no offline queueing for v1. Fail clearly if the OCR call can't complete (retry, don't silently drop the page)
 - **OCR quality control**: pages append automatically and silently by default. If the OCR provider reports low confidence for a page, the app speaks that page's recognized text aloud immediately (via the same TTS used for reading) and offers "keep" / "retry photo" so the user can catch garbled text by ear — visual proofreading isn't viable for a low-vision user, so this check is audio-only
@@ -41,7 +41,7 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 ## 5. Backend (Render)
 - `/ocr` endpoint: image in, text out
 - `/auth/*` and `/books/*` endpoints for accounts and book CRUD (see §7)
-- OCR provider and SDK choice left to Claude Code
+- OCR provider: Google Cloud Vision
 - API keys and secrets stored in Render environment variables, never exposed client-side
 - Also serves the built frontend as static files — one Render service hosts the PWA, the API, and (via a linked Render Postgres database) storage
 
