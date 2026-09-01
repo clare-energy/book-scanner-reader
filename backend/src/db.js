@@ -20,11 +20,14 @@ export async function initSchema() {
       current_chapter_index int NOT NULL DEFAULT 0,
       page_count int NOT NULL DEFAULT 0,
       last_read jsonb,
+      bookmark jsonb,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE INDEX IF NOT EXISTS books_user_id_idx ON books(user_id);
+
+    ALTER TABLE books ADD COLUMN IF NOT EXISTS bookmark jsonb;
   `);
   // CREATE TABLE IF NOT EXISTS only applies to a brand-new table — it does
   // NOT alter an already-existing table's column default, so changing the
@@ -102,6 +105,7 @@ function toBookSummary(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastRead: row.last_read,
+    bookmark: row.bookmark,
   };
 }
 
@@ -209,6 +213,15 @@ export async function startNewChapter(userId, bookId) {
 export async function setLastRead(userId, bookId, chapterIndex, phraseIndex) {
   const { rowCount } = await pool.query(
     `UPDATE books SET last_read = $3, updated_at = now() WHERE user_id = $1 AND id = $2`,
+    [userId, bookId, JSON.stringify({ chapterIndex, phraseIndex })]
+  );
+  return rowCount > 0;
+}
+
+// Only one bookmark per book/user — setting a new one overwrites the old.
+export async function setBookmark(userId, bookId, chapterIndex, phraseIndex) {
+  const { rowCount } = await pool.query(
+    `UPDATE books SET bookmark = $3, updated_at = now() WHERE user_id = $1 AND id = $2`,
     [userId, bookId, JSON.stringify({ chapterIndex, phraseIndex })]
   );
   return rowCount > 0;

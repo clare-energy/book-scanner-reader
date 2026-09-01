@@ -54,6 +54,12 @@ export const setLastRead = (id, chapterIndex, phraseIndex) =>
     body: JSON.stringify({ chapterIndex, phraseIndex }),
   })
 
+export const setBookmark = (id, chapterIndex, phraseIndex) =>
+  request(`/books/${id}/bookmark`, {
+    method: 'PUT',
+    body: JSON.stringify({ chapterIndex, phraseIndex }),
+  })
+
 export async function fetchEpubBlob(id) {
   const response = await fetch(`/books/${id}/epub`)
   if (response.status === 401) {

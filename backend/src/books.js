@@ -8,6 +8,7 @@ import {
   appendPage,
   startNewChapter,
   setLastRead,
+  setBookmark,
   getBookTitleAndChapters,
 } from "./db.js";
 import { buildEpub } from "./epub.js";
@@ -63,6 +64,16 @@ booksRouter.put("/:id/position", async (req, res) => {
     return res.status(400).json({ error: "chapterIndex and phraseIndex must be integers" });
   }
   const ok = await setLastRead(req.session.userId, req.params.id, chapterIndex, phraseIndex);
+  if (!ok) return res.status(404).json({ error: "Book not found" });
+  res.status(204).end();
+});
+
+booksRouter.put("/:id/bookmark", async (req, res) => {
+  const { chapterIndex, phraseIndex } = req.body ?? {};
+  if (!Number.isInteger(chapterIndex) || !Number.isInteger(phraseIndex)) {
+    return res.status(400).json({ error: "chapterIndex and phraseIndex must be integers" });
+  }
+  const ok = await setBookmark(req.session.userId, req.params.id, chapterIndex, phraseIndex);
   if (!ok) return res.status(404).json({ error: "Book not found" });
   res.status(204).end();
 });

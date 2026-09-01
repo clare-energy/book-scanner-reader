@@ -2,17 +2,50 @@ const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter
   ? new Intl.Segmenter('en', { granularity: 'sentence' })
   : null
 
+// Intl.Segmenter's sentence boundaries have no notion of abbreviations, so
+// "Mr. Goenka" reads as two sentences ("Mr." / "Goenka") and "S. N. Goenka"
+// reads as three ("S." / "N." / "Goenka") — each becomes its own
+// SpeechSynthesisUtterance, so the abbreviation gets spoken in isolation
+// (typically as a bare letter/initialism) with an audible gap before the
+// name that should immediately follow it.
+const ABBREVIATIONS = new Set([
+  'mr', 'mrs', 'ms', 'mx', 'dr', 'prof', 'st', 'jr', 'sr', 'rev', 'gen',
+  'capt', 'col', 'sgt', 'lt', 'fr', 'msgr', 'hon', 'sen', 'rep', 'gov',
+  'vs', 'etc', 'approx', 'no', 'vol', 'ed', 'est', 'dept', 'inc', 'ltd', 'co',
+])
+
+/** True if `text` ends in something that can't actually end a sentence. */
+function endsWithAbbreviation(text) {
+  const match = text.match(/(\p{L}+)\.$/u)
+  if (!match) return false
+  const word = match[1]
+  // A single letter before the period is a lone initial (as in "S. N.
+  // Goenka" or "U.S."), never a complete sentence on its own.
+  return word.length === 1 || ABBREVIATIONS.has(word.toLowerCase())
+}
+
 /** Split a paragraph into sentence-level phrases. */
 function segmentPhrases(text) {
   if (!text) return []
-  if (!segmenter) {
-    // Fallback for browsers without Intl.Segmenter: naive sentence split.
-    return text
-      .split(/(?<=[.!?])\s+/)
-      .map((s) => s.trim())
-      .filter(Boolean)
+  const rawPhrases = segmenter
+    ? Array.from(segmenter.segment(text), (s) => s.segment.trim()).filter(Boolean)
+    : text
+        // Fallback for browsers without Intl.Segmenter: naive sentence split.
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+  const phrases = []
+  let buffer = ''
+  for (const raw of rawPhrases) {
+    buffer = buffer ? `${buffer} ${raw}` : raw
+    if (!endsWithAbbreviation(buffer)) {
+      phrases.push(buffer)
+      buffer = ''
+    }
   }
-  return Array.from(segmenter.segment(text), (s) => s.segment.trim()).filter(Boolean)
+  if (buffer) phrases.push(buffer)
+  return phrases
 }
 
 /**

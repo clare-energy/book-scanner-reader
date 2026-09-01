@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getBook, setLastRead } from '../lib/api.js'
+import { getBook, setLastRead, setBookmark as apiSetBookmark } from '../lib/api.js'
 import { buildPhraseIndex, PlaybackController } from '../lib/speech.js'
 
 /** Which scanned page (within a chapter) a given phrase index falls on. */
@@ -13,6 +13,13 @@ function pageInfoFor(pageStarts, phraseIndex) {
   return { pageIndex, pageCount: pageStarts.length }
 }
 
+/** Snap a phrase-granular position down to the start of whichever page it falls on. */
+function snapToPageStart(phrasesByChapter, rawPosition) {
+  const pageStarts = phrasesByChapter[rawPosition.chapterIndex]?.pageStarts ?? [0]
+  const { pageIndex } = pageInfoFor(pageStarts, rawPosition.phraseIndex)
+  return { chapterIndex: rawPosition.chapterIndex, phraseIndex: pageStarts[pageIndex] ?? 0 }
+}
+
 export default function Reader() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -20,9 +27,12 @@ export default function Reader() {
 
   const [book, setBook] = useState(null)
   const [phrasesByChapter, setPhrasesByChapter] = useState(null)
+  const [initialPosition, setInitialPosition] = useState(null)
   const [position, setPosition] = useState({ chapterIndex: 0, phraseIndex: 0 })
+  const [bookmark, setBookmark] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [finished, setFinished] = useState(false)
+  const [status, setStatus] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -31,9 +41,14 @@ export default function Reader() {
         const b = await getBook(id)
         if (cancelled) return
         const phrases = buildPhraseIndex(b)
+        // Reopening a book always starts from the top of the page it was
+        // last on, not the exact phrase — mid-page resume was confusing.
+        const start = snapToPageStart(phrases, b.lastRead ?? { chapterIndex: 0, phraseIndex: 0 })
         setBook(b)
         setPhrasesByChapter(phrases)
-        setPosition(b.lastRead ?? { chapterIndex: 0, phraseIndex: 0 })
+        setInitialPosition(start)
+        setPosition(start)
+        setBookmark(b.bookmark ?? null)
       } catch {
         if (!cancelled) navigate('/')
       }
@@ -44,11 +59,11 @@ export default function Reader() {
   }, [id, navigate])
 
   useEffect(() => {
-    if (!book || !phrasesByChapter) return
+    if (!book || !phrasesByChapter || !initialPosition) return
 
     const controller = new PlaybackController(
       { title: book.title, phrasesByChapter },
-      book.lastRead ?? { chapterIndex: 0, phraseIndex: 0 },
+      initialPosition,
       {
         onPosition: (pos) => {
           setPosition(pos)
@@ -61,7 +76,23 @@ export default function Reader() {
     )
     controllerRef.current = controller
     return () => controller.destroy()
-  }, [book, phrasesByChapter])
+  }, [book, phrasesByChapter, initialPosition])
+
+  async function handleSetBookmark() {
+    try {
+      await apiSetBookmark(book.id, position.chapterIndex, position.phraseIndex)
+      setBookmark({ chapterIndex: position.chapterIndex, phraseIndex: position.phraseIndex })
+      setStatus('Bookmark set at the current phrase.')
+    } catch (err) {
+      setStatus(err.message || 'Could not set bookmark, please retry.')
+    }
+  }
+
+  function handlePlayFromBookmark() {
+    if (!bookmark) return
+    controllerRef.current?.seek(bookmark.chapterIndex, bookmark.phraseIndex)
+    controllerRef.current?.play()
+  }
 
   if (!book || !phrasesByChapter) return <p>Loading…</p>
 
@@ -112,6 +143,17 @@ export default function Reader() {
           Next ⏭
         </button>
       </div>
+
+      <div className="row">
+        <button onClick={handleSetBookmark}>Set Bookmark Here</button>
+        {bookmark && <button onClick={handlePlayFromBookmark}>Play from Last Bookmark</button>}
+      </div>
+
+      {status && (
+        <div className="status" role="status" aria-live="polite">
+          {status}
+        </div>
+      )}
 
       <button onClick={() => navigate('/')}>Back to Library</button>
     </div>

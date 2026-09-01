@@ -31,11 +31,12 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 - Export/share the EPUB at any point (e.g. to hand off to @Voice via Android share sheet)
 
 ## 4. Reading & phrase/page navigation
-- Text segmented into phrases via `Intl.Segmenter` (sentence granularity, with room to go finer if sentences feel too coarse)
+- Text segmented into phrases via `Intl.Segmenter` (sentence granularity, with room to go finer if sentences feel too coarse), with a merge pass afterward: `Intl.Segmenter` has no notion of abbreviations, so "Mr. Goenka" or "S. N. Goenka" would otherwise split into separate phrases at each period, and each phrase becomes its own utterance with an audible gap. Phrases ending in a known title/abbreviation (Mr., Dr., etc., ...) or a lone initial (a single letter + period) get merged into the next phrase
 - Playback state machine: current book + chapter + phrase index; `SpeechSynthesisUtterance` queue with `onend` auto-advance
 - Skip forward/back by phrase, and separately by whole scanned page (jumps to the first phrase of the next/previous page; crosses a chapter boundary at the first/last page of a chapter rather than stopping) — both bound to on-screen controls; phrase skip is also bound to the Media Session API (`nexttrack`/`previoustrack`) for Bluetooth remote compatibility
 - Pause/resume: attempt native `speechSynthesis.pause()/resume()`, but implement cancel+resume-from-phrase-start as a fallback given known Android Chrome reliability issues with native pause
-- Resume position persisted per book server-side
+- Resume position persisted per book server-side, but reopening a book always starts from the first phrase of the page it was last on, not the exact phrase — mid-page resume was confusing
+- **Bookmark**: separate from the auto-tracked resume position, the user can explicitly mark one phrase per book ("Set Bookmark Here" on the Reader) to return to later, regardless of where auto-resume would otherwise land. Setting a new bookmark overwrites the previous one — only one per book/user. "Play from Last Bookmark" (shown only once a bookmark exists) jumps straight there and starts playback
 - **v1 is audio-only** — no on-screen text display or highlighting (explicitly deferred, not a blocker)
 
 ## 5. Backend (Render)
