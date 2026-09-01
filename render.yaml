@@ -7,7 +7,7 @@ services:
     name: book-scanner-reader
     runtime: node
     plan: free
-    buildCommand: npm install --prefix frontend && npm run build --prefix frontend && npm install --prefix backend
+    buildCommand: npm install --prefix frontend --include=dev && npm run build --prefix frontend && npm install --prefix backend
     startCommand: npm start --prefix backend
     healthCheckPath: /health
     envVars:
