@@ -13,7 +13,10 @@ function escapeXml(str) {
 }
 
 function chapterXhtml(chapter) {
-  const paragraphs = chapter.paragraphs.map((p) => `<p>${escapeXml(p)}</p>`).join("\n    ");
+  const paragraphs = chapter.pages
+    .flat()
+    .map((p) => `<p>${escapeXml(p)}</p>`)
+    .join("\n    ");
   return `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
   <head>
@@ -98,7 +101,7 @@ h1 { font-size: 1.4em; }
 p { margin: 0 0 1em; text-indent: 1.2em; }`;
 
 /**
- * @param {{ id: string, title: string, updatedAt: Date|string|number, chapters: { title: string, paragraphs: string[] }[] }} book
+ * @param {{ id: string, title: string, updatedAt: Date|string|number, chapters: { title: string, pages: string[][] }[] }} book
  * @returns {Promise<Buffer>}
  */
 export async function buildEpub(book) {

@@ -1,4 +1,11 @@
 import express from "express";
+// Patches Express 4's router so a rejected promise from an async route
+// handler is forwarded to the error-handling middleware below, instead of
+// becoming an unhandled rejection that crashes the whole process (which is
+// exactly what happened when appendPage() threw on a stale-schema book —
+// one bad request took the server down for every user). Must be imported
+// before any routes are registered.
+import "express-async-errors";
 import cors from "cors";
 import multer from "multer";
 import session from "express-session";

@@ -30,10 +30,10 @@ A mobile-first Progressive Web App (installed via "Add to Home Screen," no app s
 - **Chapter model**: consecutive scanned pages append into the current chapter by default. User has an explicit "New Chapter" action in Scan mode that closes the current chapter and starts the next
 - Export/share the EPUB at any point (e.g. to hand off to @Voice via Android share sheet)
 
-## 4. Reading & phrase navigation
+## 4. Reading & phrase/page navigation
 - Text segmented into phrases via `Intl.Segmenter` (sentence granularity, with room to go finer if sentences feel too coarse)
 - Playback state machine: current book + chapter + phrase index; `SpeechSynthesisUtterance` queue with `onend` auto-advance
-- Skip forward/back bound to on-screen controls and Media Session API (`nexttrack`/`previoustrack`) for Bluetooth remote compatibility
+- Skip forward/back by phrase, and separately by whole scanned page (jumps to the first phrase of the next/previous page; crosses a chapter boundary at the first/last page of a chapter rather than stopping) — both bound to on-screen controls; phrase skip is also bound to the Media Session API (`nexttrack`/`previoustrack`) for Bluetooth remote compatibility
 - Pause/resume: attempt native `speechSynthesis.pause()/resume()`, but implement cancel+resume-from-phrase-start as a fallback given known Android Chrome reliability issues with native pause
 - Resume position persisted per book server-side
 - **v1 is audio-only** — no on-screen text display or highlighting (explicitly deferred, not a blocker)

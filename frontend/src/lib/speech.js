@@ -15,11 +15,23 @@ function segmentPhrases(text) {
   return Array.from(segmenter.segment(text), (s) => s.segment.trim()).filter(Boolean)
 }
 
-/** Flatten a book's chapters into per-chapter arrays of phrases. */
+/**
+ * Flatten a book's chapters into per-chapter phrase lists, keeping track of
+ * which flattened phrase index each scanned page starts at (pageStarts) so
+ * the Reader can jump between physical pages, not just phrases.
+ */
 export function buildPhraseIndex(book) {
-  return book.chapters.map((chapter) =>
-    chapter.paragraphs.flatMap((paragraph) => segmentPhrases(paragraph))
-  )
+  return book.chapters.map((chapter) => {
+    const phrases = []
+    const pageStarts = []
+    for (const page of chapter.pages) {
+      pageStarts.push(phrases.length)
+      for (const paragraph of page) {
+        phrases.push(...segmentPhrases(paragraph))
+      }
+    }
+    return { phrases, pageStarts }
+  })
 }
 
 /**
@@ -31,7 +43,7 @@ export function buildPhraseIndex(book) {
  */
 export class PlaybackController {
   /**
-   * @param {{ title: string, phrasesByChapter: string[][] }} book
+   * @param {{ title: string, phrasesByChapter: { phrases: string[], pageStarts: number[] }[] }} book
    * @param {{ chapterIndex: number, phraseIndex: number }} startPosition
    * @param {{
    *   onPosition?: (pos: { chapterIndex: number, phraseIndex: number }) => void,
@@ -51,11 +63,26 @@ export class PlaybackController {
   }
 
   _chapterLength(chapterIndex) {
-    return this.phrasesByChapter[chapterIndex]?.length ?? 0
+    return this.phrasesByChapter[chapterIndex]?.phrases.length ?? 0
   }
 
   _currentText() {
-    return this.phrasesByChapter[this.chapterIndex]?.[this.phraseIndex] ?? ''
+    return this.phrasesByChapter[this.chapterIndex]?.phrases[this.phraseIndex] ?? ''
+  }
+
+  _pageStarts(chapterIndex = this.chapterIndex) {
+    return this.phrasesByChapter[chapterIndex]?.pageStarts ?? []
+  }
+
+  /** Which page (within the current chapter) the current phrase falls on. */
+  _pageInfo() {
+    const pageStarts = this._pageStarts()
+    let pageIndex = 0
+    for (let i = 0; i < pageStarts.length; i++) {
+      if (pageStarts[i] <= this.phraseIndex) pageIndex = i
+      else break
+    }
+    return { pageIndex, pageCount: pageStarts.length }
   }
 
   _notifyPosition() {
@@ -159,6 +186,37 @@ export class PlaybackController {
     }
     this._notifyPosition()
     if (this.isPlaying) this._speakCurrent()
+  }
+
+  /** Jump straight to a given chapter + phrase (e.g. from page navigation). */
+  seek(chapterIndex, phraseIndex) {
+    const ci = clamp(chapterIndex, 0, this.phrasesByChapter.length - 1)
+    const pi = clamp(phraseIndex, 0, this._chapterLength(ci) - 1)
+    this.chapterIndex = ci
+    this.phraseIndex = pi
+    this._notifyPosition()
+    if (this.isPlaying) this._speakCurrent()
+  }
+
+  /** Jump to the next scanned page, crossing into the next chapter if needed. */
+  nextPage() {
+    const { pageIndex, pageCount } = this._pageInfo()
+    if (pageIndex + 1 < pageCount) {
+      this.seek(this.chapterIndex, this._pageStarts()[pageIndex + 1])
+    } else if (this.chapterIndex + 1 < this.phrasesByChapter.length) {
+      this.seek(this.chapterIndex + 1, 0)
+    }
+  }
+
+  /** Jump to the previous scanned page, crossing into the previous chapter if needed. */
+  previousPage() {
+    const { pageIndex } = this._pageInfo()
+    if (pageIndex > 0) {
+      this.seek(this.chapterIndex, this._pageStarts()[pageIndex - 1])
+    } else if (this.chapterIndex > 0) {
+      const prevStarts = this._pageStarts(this.chapterIndex - 1)
+      this.seek(this.chapterIndex - 1, prevStarts[prevStarts.length - 1] ?? 0)
+    }
   }
 
   destroy() {

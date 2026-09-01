@@ -3,6 +3,16 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { getBook, setLastRead } from '../lib/api.js'
 import { buildPhraseIndex, PlaybackController } from '../lib/speech.js'
 
+/** Which scanned page (within a chapter) a given phrase index falls on. */
+function pageInfoFor(pageStarts, phraseIndex) {
+  let pageIndex = 0
+  for (let i = 0; i < pageStarts.length; i++) {
+    if (pageStarts[i] <= phraseIndex) pageIndex = i
+    else break
+  }
+  return { pageIndex, pageCount: pageStarts.length }
+}
+
 export default function Reader() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -55,8 +65,10 @@ export default function Reader() {
 
   if (!book || !phrasesByChapter) return <p>Loading…</p>
 
-  const totalPhrasesInChapter = phrasesByChapter[position.chapterIndex]?.length ?? 0
+  const totalPhrasesInChapter = phrasesByChapter[position.chapterIndex]?.phrases.length ?? 0
   const chapterTitle = book.chapters[position.chapterIndex]?.title ?? ''
+  const pageStarts = phrasesByChapter[position.chapterIndex]?.pageStarts ?? []
+  const { pageIndex, pageCount } = pageInfoFor(pageStarts, position.phraseIndex)
 
   return (
     <div className="stack">
@@ -65,12 +77,22 @@ export default function Reader() {
       </div>
 
       <p className="progress-text">
-        {chapterTitle} — phrase {Math.min(position.phraseIndex + 1, totalPhrasesInChapter)} of{' '}
-        {totalPhrasesInChapter} · Chapter {position.chapterIndex + 1} of {book.chapters.length}
+        {chapterTitle} — Page {Math.min(pageIndex + 1, pageCount)} of {pageCount} — phrase{' '}
+        {Math.min(position.phraseIndex + 1, totalPhrasesInChapter)} of {totalPhrasesInChapter} ·
+        Chapter {position.chapterIndex + 1} of {book.chapters.length}
       </p>
 
       <div className="status" role="status" aria-live="polite">
         {finished ? 'Finished the book.' : isPlaying ? 'Playing.' : 'Paused.'}
+      </div>
+
+      <div className="row">
+        <button onClick={() => controllerRef.current?.previousPage()} aria-label="Previous page">
+          ◀◀ Page
+        </button>
+        <button onClick={() => controllerRef.current?.nextPage()} aria-label="Next page">
+          Page ▶▶
+        </button>
       </div>
 
       <div className="row">

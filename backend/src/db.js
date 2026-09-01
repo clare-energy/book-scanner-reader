@@ -16,7 +16,7 @@ export async function initSchema() {
       id uuid PRIMARY KEY,
       user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title text NOT NULL,
-      chapters jsonb NOT NULL DEFAULT '[{"title":"Chapter 1","paragraphs":[]}]',
+      chapters jsonb NOT NULL DEFAULT '[{"title":"Chapter 1","pages":[]}]',
       current_chapter_index int NOT NULL DEFAULT 0,
       page_count int NOT NULL DEFAULT 0,
       last_read jsonb,
@@ -26,6 +26,40 @@ export async function initSchema() {
 
     CREATE INDEX IF NOT EXISTS books_user_id_idx ON books(user_id);
   `);
+  // CREATE TABLE IF NOT EXISTS only applies to a brand-new table — it does
+  // NOT alter an already-existing table's column default, so changing the
+  // DEFAULT above silently does nothing once the table exists (new rows
+  // kept getting the old default until this ran). Explicit ALTER instead.
+  await pool.query(
+    `ALTER TABLE books ALTER COLUMN chapters SET DEFAULT '[{"title":"Chapter 1","pages":[]}]'`
+  );
+  await migrateLegacyChapters();
+}
+
+// Chapters used to store one flat `paragraphs` array per chapter, with no
+// record of which paragraphs came from which scan. Now each chapter stores
+// `pages` (an array of paragraph-arrays, one per scan). Original page
+// boundaries for content scanned before this change can't be recovered, so
+// existing paragraphs collapse into a single synthetic "page 1" per
+// chapter. Idempotent: once no legacy-shaped chapters remain, this is a
+// no-op, so it's safe to run on every startup rather than as a manual step.
+async function migrateLegacyChapters() {
+  const { rows } = await pool.query(`SELECT id, chapters FROM books`);
+  for (const row of rows) {
+    let changed = false;
+    const chapters = row.chapters.map((chapter) => {
+      if (chapter.pages) return chapter;
+      changed = true;
+      const { paragraphs, ...rest } = chapter;
+      return { ...rest, pages: paragraphs?.length ? [paragraphs] : [] };
+    });
+    if (changed) {
+      await pool.query(`UPDATE books SET chapters = $2 WHERE id = $1`, [
+        row.id,
+        JSON.stringify(chapters),
+      ]);
+    }
+  }
 }
 
 function newId() {
@@ -141,7 +175,7 @@ export async function appendPage(userId, bookId, text) {
     .filter(Boolean);
 
   const chapters = book.chapters;
-  chapters[book.current_chapter_index].paragraphs.push(...paragraphs);
+  chapters[book.current_chapter_index].pages.push(paragraphs);
 
   const { rows } = await pool.query(
     `UPDATE books SET chapters = $3, page_count = page_count + 1, updated_at = now()
@@ -157,11 +191,11 @@ export async function startNewChapter(userId, bookId) {
 
   const chapters = book.chapters;
   const current = chapters[book.current_chapter_index];
-  if (current.paragraphs.length === 0) {
+  if (current.pages.length === 0) {
     return toBookDetail(book);
   }
 
-  chapters.push({ title: `Chapter ${chapters.length + 1}`, paragraphs: [] });
+  chapters.push({ title: `Chapter ${chapters.length + 1}`, pages: [] });
   const newIndex = chapters.length - 1;
 
   const { rows } = await pool.query(
