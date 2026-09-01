@@ -43,18 +43,44 @@ function drawToCanvas(bitmap) {
   return canvas
 }
 
+// findPaperContour() just Canny-edge-detects and picks the single largest
+// contour by area, with no check on whether that's actually most of the
+// frame. On an image without a strong page-vs-background edge (e.g. a flat
+// desktop scan, or a photo on a similarly-colored surface), it can lock onto
+// a small spurious region — and extractPaper() will happily warp that tiny
+// crop to fill the whole output, destroying the real page content instead
+// of correcting it. Require the detected region to cover most of the frame
+// before trusting it.
+const MIN_PAPER_AREA_RATIO = 0.35
+
 /** Best-effort perspective correction: finds the page edges and un-warps them flat. */
 async function tryPerspectiveCorrect(canvas) {
+  let cvImg
   try {
     const cv = await withTimeout(loadCv(), CV_LOAD_TIMEOUT_MS)
     window.cv = cv
     const JScanify = (await import('jscanify/client')).default
     const scanner = new JScanify()
+
+    cvImg = cv.imread(canvas)
+    const contour = scanner.findPaperContour(cvImg)
+    if (!contour) return canvas
+
+    const areaRatio = cv.contourArea(contour) / (cvImg.rows * cvImg.cols)
+    if (areaRatio < MIN_PAPER_AREA_RATIO) {
+      console.warn(
+        `Perspective correction skipped: detected region only covers ${(areaRatio * 100).toFixed(1)}% of the frame.`
+      )
+      return canvas
+    }
+
     const extracted = scanner.extractPaper(canvas, canvas.width, canvas.height)
     return extracted || canvas
   } catch (err) {
     console.warn('Perspective correction unavailable, continuing without it:', err)
     return canvas
+  } finally {
+    cvImg?.delete()
   }
 }
 
