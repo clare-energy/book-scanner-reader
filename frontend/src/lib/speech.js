@@ -24,6 +24,38 @@ function endsWithAbbreviation(text) {
   return word.length === 1 || ABBREVIATIONS.has(word.toLowerCase())
 }
 
+// Merging phrases (above) fixes phrase *boundaries* for navigation, but the
+// speech engine itself still sees a literal "." after "Mr" and inserts its
+// own pause there — that happens at the TTS engine level, independent of
+// how many sentences we packed into one utterance. So the abbreviation
+// itself needs rewriting before it's spoken: expand common titles to full
+// words, and strip the period after lone initials so there's no "."
+// left for the engine to pause on.
+const TITLE_EXPANSIONS = {
+  mr: 'Mister', mrs: 'Missus', ms: 'Miz', mx: 'Mix', dr: 'Doctor',
+  prof: 'Professor', jr: 'Junior', sr: 'Senior', rev: 'Reverend',
+  gen: 'General', capt: 'Captain', col: 'Colonel', sgt: 'Sergeant',
+  lt: 'Lieutenant', fr: 'Father', msgr: 'Monsignor', hon: 'Honorable',
+  sen: 'Senator', rep: 'Representative', gov: 'Governor',
+  vs: 'versus', etc: 'et cetera', approx: 'approximately',
+}
+
+/** Rewrite abbreviations so the speech engine doesn't pause mid-utterance. */
+function normalizeForSpeech(text) {
+  return text
+    .replace(/\b(\p{L}+)\.(?=\s|$)/gu, (match, word) => {
+      const expansion = TITLE_EXPANSIONS[word.toLowerCase()]
+      return expansion ?? match
+    })
+    // Lone initials with a space between them ("S. N. Goenka") — drop the
+    // period so the engine doesn't treat it as a sentence end. The negative
+    // lookbehind excludes compact forms like "U.S." (no space between
+    // letters): without it, "S." in "U.S." would still match on its own
+    // and lose its period while "U." keeps its (guarded by the lookahead
+    // below), corrupting "U.S." into "U.S" instead of leaving it alone.
+    .replace(/\b(?<!\p{Lu}\.)(\p{Lu})\.(?=\s)/gu, '$1')
+}
+
 /** Split a paragraph into sentence-level phrases. */
 function segmentPhrases(text) {
   if (!text) return []
@@ -147,7 +179,7 @@ export class PlaybackController {
     }
     window.speechSynthesis.cancel()
     const token = ++this._playToken
-    const utterance = new SpeechSynthesisUtterance(text)
+    const utterance = new SpeechSynthesisUtterance(normalizeForSpeech(text))
     // Cancelling the previous utterance (below, and on next/previous/pause)
     // fires ITS onend/onerror asynchronously. Without the token guard, that
     // stale event would trigger a second, spurious _advanceOrFinish() on
@@ -271,7 +303,7 @@ function clamp(value, min, max) {
 /** Speak a one-off piece of text (used for the low-confidence OCR readback check). */
 export function speakOnce(text, onEnd) {
   window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(text)
+  const utterance = new SpeechSynthesisUtterance(normalizeForSpeech(text))
   if (onEnd) utterance.onend = onEnd
   window.speechSynthesis.speak(utterance)
 }
