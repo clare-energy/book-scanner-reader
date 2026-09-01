@@ -12,10 +12,24 @@ function RequireAuth({ children }) {
   return children
 }
 
+function RedirectIfAuthed({ children }) {
+  const { user, checking } = useAuth()
+  if (checking) return <p>Loading…</p>
+  if (user) return <Navigate to="/" replace />
+  return children
+}
+
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      <Route
+        path="/login"
+        element={
+          <RedirectIfAuthed>
+            <Login />
+          </RedirectIfAuthed>
+        }
+      />
       <Route
         path="/"
         element={
