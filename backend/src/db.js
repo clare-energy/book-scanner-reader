@@ -1,7 +1,16 @@
 import pg from "pg";
 import crypto from "node:crypto";
 
-export const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+// Render's managed Postgres requires SSL for connections from outside its
+// own private network (e.g. cross-region, as this app's web service and
+// database are in different regions) — rejectUnauthorized: false matches
+// Render's own documented guidance for connecting Node apps to their
+// Postgres, since the cert chain isn't fully verifiable via Node's default
+// trust store. Local dev's Postgres container has no SSL and doesn't need it.
+export const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+});
 
 export async function initSchema() {
   await pool.query(`
