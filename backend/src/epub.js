@@ -12,10 +12,40 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
+// Mirrors frontend/src/lib/speech.js's TITLE_EXPANSIONS. Kept as a
+// duplicate rather than shared, same reasoning as the rest of this file:
+// small enough not to be worth monorepo tooling, and the two uses are
+// genuinely different (this wraps markup around the original text for
+// whatever reader opens the exported EPUB; speech.js rewrites text fed
+// straight to our own in-app SpeechSynthesisUtterance).
+const TITLE_EXPANSIONS = {
+  mr: "Mister", mrs: "Missus", ms: "Miz", mx: "Mix", dr: "Doctor",
+  prof: "Professor", jr: "Junior", sr: "Senior", rev: "Reverend",
+  gen: "General", capt: "Captain", col: "Colonel", sgt: "Sergeant",
+  lt: "Lieutenant", fr: "Father", msgr: "Monsignor", hon: "Honorable",
+  sen: "Senator", rep: "Representative", gov: "Governor",
+  vs: "versus", etc: "et cetera", approx: "approximately",
+};
+
+/**
+ * Wraps recognized title abbreviations in <abbr title="..."> so the
+ * original printed text ("Mr.") stays exactly as scanned, while readers/TTS
+ * engines that honor the title attribute get a pronunciation hint
+ * ("Mister"). Support for this varies a lot across EPUB readers — many
+ * just speak the visible text and ignore it — so this is a best-effort
+ * addition, not a guaranteed fix for every app the export gets opened in.
+ */
+function annotateAbbreviations(paragraph) {
+  return escapeXml(paragraph).replace(/\b(\p{L}+)\.(?=\s|$)/gu, (match, word) => {
+    const expansion = TITLE_EXPANSIONS[word.toLowerCase()];
+    return expansion ? `<abbr title="${expansion}">${match}</abbr>` : match;
+  });
+}
+
 function chapterXhtml(chapter) {
   const paragraphs = chapter.pages
     .flat()
-    .map((p) => `<p>${escapeXml(p)}</p>`)
+    .map((p) => `<p>${annotateAbbreviations(p)}</p>`)
     .join("\n    ");
   return `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">

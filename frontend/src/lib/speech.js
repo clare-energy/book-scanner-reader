@@ -311,3 +311,19 @@ export function speakOnce(text, onEnd) {
 export function stopSpeaking() {
   window.speechSynthesis.cancel()
 }
+
+/** Currently available SpeechSynthesis voices (may be empty until the browser finishes loading them — see subscribeToVoices). */
+export function getAvailableVoices() {
+  return typeof speechSynthesis !== 'undefined' ? speechSynthesis.getVoices() : []
+}
+
+/**
+ * Voice lists often load asynchronously after the page starts. Calls
+ * `callback` whenever the browser's voice list changes/becomes available.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToVoices(callback) {
+  if (typeof speechSynthesis === 'undefined') return () => {}
+  speechSynthesis.addEventListener('voiceschanged', callback)
+  return () => speechSynthesis.removeEventListener('voiceschanged', callback)
+}

@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getBook, setLastRead, setBookmark as apiSetBookmark } from '../lib/api.js'
-import { buildPhraseIndex, PlaybackController } from '../lib/speech.js'
+import {
+  buildPhraseIndex,
+  PlaybackController,
+  getAvailableVoices,
+  subscribeToVoices,
+} from '../lib/speech.js'
 
 /** Which scanned page (within a chapter) a given phrase index falls on. */
 function pageInfoFor(pageStarts, phraseIndex) {
@@ -33,6 +38,12 @@ export default function Reader() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [finished, setFinished] = useState(false)
   const [status, setStatus] = useState('')
+  const [voices, setVoices] = useState(() => getAvailableVoices())
+
+  useEffect(() => {
+    setVoices(getAvailableVoices())
+    return subscribeToVoices(() => setVoices(getAvailableVoices()))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -154,6 +165,23 @@ export default function Reader() {
           {status}
         </div>
       )}
+
+      <details>
+        <summary>Voice options on this device ({voices.length})</summary>
+        {voices.length === 0 ? (
+          <p>No voices reported yet, or this browser doesn't expose a voice list.</p>
+        ) : (
+          <ul>
+            {voices.map((v) => (
+              <li key={v.voiceURI}>
+                {v.name} — {v.lang}
+                {v.default ? ' · default' : ''}
+                {v.localService ? '' : ' · network'}
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
 
       <button onClick={() => navigate('/')}>Back to Library</button>
     </div>
