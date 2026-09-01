@@ -48,6 +48,12 @@ export const appendPageText = (id, text) =>
 
 export const startNewChapter = (id) => request(`/books/${id}/chapters`, { method: 'POST' })
 
+export const updatePageText = (id, chapterIndex, pageIndex, text) =>
+  request(`/books/${id}/chapters/${chapterIndex}/pages/${pageIndex}`, {
+    method: 'PUT',
+    body: JSON.stringify({ text }),
+  })
+
 export const setLastRead = (id, chapterIndex, phraseIndex) =>
   request(`/books/${id}/position`, {
     method: 'PUT',
@@ -59,6 +65,41 @@ export const setBookmark = (id, chapterIndex, phraseIndex) =>
     method: 'PUT',
     body: JSON.stringify({ chapterIndex, phraseIndex }),
   })
+
+// --- pronunciation dictionary ---
+
+export const listPronunciations = () => request('/pronunciations')
+
+export const addPronunciation = (term, pronunciation) =>
+  request('/pronunciations', { method: 'POST', body: JSON.stringify({ term, pronunciation }) })
+
+export const deletePronunciation = (id) => request(`/pronunciations/${id}`, { method: 'DELETE' })
+
+export async function fetchPronunciationsPlsBlob() {
+  const response = await fetch('/pronunciations/export.pls')
+  if (response.status === 401) {
+    window.dispatchEvent(new Event('auth:unauthorized'))
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.error || 'Export failed')
+  }
+  return response.blob()
+}
+
+export async function importPronunciationsPls(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await fetch('/pronunciations/import-pls', { method: 'POST', body: formData })
+  if (response.status === 401) {
+    window.dispatchEvent(new Event('auth:unauthorized'))
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.error || 'Import failed')
+  }
+  return response.json()
+}
 
 export async function fetchEpubBlob(id) {
   const response = await fetch(`/books/${id}/epub`)

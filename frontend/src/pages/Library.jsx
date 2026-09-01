@@ -84,9 +84,12 @@ export default function Library() {
         </button>
       </div>
 
-      <button className="primary" onClick={handleNewBook}>
-        + New Book
-      </button>
+      <div className="row">
+        <button className="primary" onClick={handleNewBook}>
+          + New Book
+        </button>
+        <button onClick={() => navigate('/pronunciations')}>Pronunciation Dictionary</button>
+      </div>
 
       <div className="status" role="status" aria-live="polite">
         {status}

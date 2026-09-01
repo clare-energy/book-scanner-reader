@@ -28,6 +28,17 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS books_user_id_idx ON books(user_id);
 
     ALTER TABLE books ADD COLUMN IF NOT EXISTS bookmark jsonb;
+
+    CREATE TABLE IF NOT EXISTS pronunciation_entries (
+      id uuid PRIMARY KEY,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      term text NOT NULL,
+      pronunciation text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (user_id, term)
+    );
+
+    CREATE INDEX IF NOT EXISTS pronunciation_entries_user_id_idx ON pronunciation_entries(user_id);
   `);
   // CREATE TABLE IF NOT EXISTS only applies to a brand-new table — it does
   // NOT alter an already-existing table's column default, so changing the
@@ -169,21 +180,44 @@ export async function deleteBook(userId, bookId) {
   return rowCount > 0;
 }
 
+function splitIntoParagraphs(text) {
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
 export async function appendPage(userId, bookId, text) {
   const book = await getRawBookForUser(userId, bookId);
   if (!book) return null;
 
-  const paragraphs = text
-    .split(/\n\s*\n/)
-    .map((p) => p.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
   const chapters = book.chapters;
-  chapters[book.current_chapter_index].pages.push(paragraphs);
+  chapters[book.current_chapter_index].pages.push(splitIntoParagraphs(text));
 
   const { rows } = await pool.query(
     `UPDATE books SET chapters = $3, page_count = page_count + 1, updated_at = now()
      WHERE user_id = $1 AND id = $2 RETURNING *`,
+    [userId, bookId, JSON.stringify(chapters)]
+  );
+  return toBookDetail(rows[0]);
+}
+
+// Replaces one scanned page's text wholesale (e.g. fixing OCR errors) rather
+// than appending a new one — same paragraph-splitting rule as a fresh scan,
+// so hand-edited text behaves identically to OCR output everywhere else
+// (TTS phrasing, EPUB export, etc).
+export async function updatePageText(userId, bookId, chapterIndex, pageIndex, text) {
+  const book = await getRawBookForUser(userId, bookId);
+  if (!book) return null;
+
+  const chapter = book.chapters[chapterIndex];
+  if (!chapter || !chapter.pages[pageIndex]) return null;
+
+  const chapters = book.chapters;
+  chapters[chapterIndex].pages[pageIndex] = splitIntoParagraphs(text);
+
+  const { rows } = await pool.query(
+    `UPDATE books SET chapters = $3, updated_at = now() WHERE user_id = $1 AND id = $2 RETURNING *`,
     [userId, bookId, JSON.stringify(chapters)]
   );
   return toBookDetail(rows[0]);
@@ -231,4 +265,68 @@ export async function getBookTitleAndChapters(userId, bookId) {
   const book = await getRawBookForUser(userId, bookId);
   if (!book) return null;
   return { id: book.id, title: book.title, chapters: book.chapters, updatedAt: book.updated_at };
+}
+
+// --- pronunciation dictionary ---
+
+function toPronunciationEntry(row) {
+  return { id: row.id, term: row.term, pronunciation: row.pronunciation };
+}
+
+export async function listPronunciationsForUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM pronunciation_entries WHERE user_id = $1 ORDER BY term`,
+    [userId]
+  );
+  return rows.map(toPronunciationEntry);
+}
+
+// Adding a term that already exists (case-sensitive, exact match) updates its
+// pronunciation instead of erroring — lets both the settings-panel "add" form
+// and a re-import of the same lexicon behave like an upsert.
+export async function upsertPronunciation(userId, term, pronunciation) {
+  const { rows } = await pool.query(
+    `INSERT INTO pronunciation_entries (id, user_id, term, pronunciation)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, term) DO UPDATE SET pronunciation = excluded.pronunciation
+     RETURNING *`,
+    [newId(), userId, term, pronunciation]
+  );
+  return toPronunciationEntry(rows[0]);
+}
+
+export async function deletePronunciation(userId, id) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM pronunciation_entries WHERE user_id = $1 AND id = $2`,
+    [userId, id]
+  );
+  return rowCount > 0;
+}
+
+// Bulk upsert for PLS import — same one-row-at-a-time upsert as
+// upsertPronunciation, just looped in a single round trip's worth of
+// sequential queries (import lists are small, a handful to low hundreds of
+// entries, so a transaction here is about correctness, not performance).
+export async function importPronunciations(userId, entries) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    let imported = 0;
+    for (const { term, pronunciation } of entries) {
+      await client.query(
+        `INSERT INTO pronunciation_entries (id, user_id, term, pronunciation)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, term) DO UPDATE SET pronunciation = excluded.pronunciation`,
+        [newId(), userId, term, pronunciation]
+      );
+      imported++;
+    }
+    await client.query("COMMIT");
+    return imported;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

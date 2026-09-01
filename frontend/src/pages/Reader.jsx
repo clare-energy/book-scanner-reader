@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getBook, setLastRead, setBookmark as apiSetBookmark } from '../lib/api.js'
+import {
+  getBook,
+  setLastRead,
+  setBookmark as apiSetBookmark,
+  updatePageText,
+  listPronunciations,
+} from '../lib/api.js'
 import { buildPhraseIndex, PlaybackController } from '../lib/speech.js'
 
 /** Which scanned page (within a chapter) a given phrase index falls on. */
@@ -33,14 +39,18 @@ export default function Reader() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [finished, setFinished] = useState(false)
   const [status, setStatus] = useState('')
+  const [isEditingPage, setIsEditingPage] = useState(false)
+  const [pageEditText, setPageEditText] = useState('')
+  const pronunciationEntriesRef = useRef([])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const b = await getBook(id)
+        const [b, pronunciationEntries] = await Promise.all([getBook(id), listPronunciations()])
         if (cancelled) return
-        const phrases = buildPhraseIndex(b)
+        pronunciationEntriesRef.current = pronunciationEntries
+        const phrases = buildPhraseIndex(b, pronunciationEntries)
         // Reopening a book always starts from the top of the page it was
         // last on, not the exact phrase — mid-page resume was confusing.
         const start = snapToPageStart(phrases, b.lastRead ?? { chapterIndex: 0, phraseIndex: 0 })
@@ -101,6 +111,33 @@ export default function Reader() {
   const pageStarts = phrasesByChapter[position.chapterIndex]?.pageStarts ?? []
   const { pageIndex, pageCount } = pageInfoFor(pageStarts, position.phraseIndex)
 
+  function handleStartEditPage() {
+    controllerRef.current?.pause()
+    const pageParagraphs = book.chapters[position.chapterIndex]?.pages[pageIndex] ?? []
+    setPageEditText(pageParagraphs.join('\n\n'))
+    setIsEditingPage(true)
+  }
+
+  function handleCancelEditPage() {
+    setIsEditingPage(false)
+  }
+
+  async function handleSaveEditPage() {
+    try {
+      const updatedBook = await updatePageText(book.id, position.chapterIndex, pageIndex, pageEditText)
+      const updatedPhrases = buildPhraseIndex(updatedBook, pronunciationEntriesRef.current)
+      const newPageStart = updatedPhrases[position.chapterIndex]?.pageStarts[pageIndex] ?? 0
+      setBook(updatedBook)
+      setPhrasesByChapter(updatedPhrases)
+      controllerRef.current?.updatePhrases(updatedPhrases)
+      controllerRef.current?.seek(position.chapterIndex, newPageStart)
+      setIsEditingPage(false)
+      setStatus('Page updated.')
+    } catch (err) {
+      setStatus(err.message || 'Could not save changes, please retry.')
+    }
+  }
+
   return (
     <div className="stack">
       <div className="top-bar">
@@ -148,6 +185,27 @@ export default function Reader() {
         <button onClick={handleSetBookmark}>Set Bookmark Here</button>
         {bookmark && <button onClick={handlePlayFromBookmark}>Play from Last Bookmark</button>}
       </div>
+
+      {isEditingPage ? (
+        <div className="stack page-editor">
+          <textarea
+            value={pageEditText}
+            onChange={(e) => setPageEditText(e.target.value)}
+            rows={12}
+            aria-label={`Edit text for page ${pageIndex + 1}`}
+          />
+          <div className="row">
+            <button className="primary" onClick={handleSaveEditPage}>
+              Save Changes
+            </button>
+            <button onClick={handleCancelEditPage}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="row">
+          <button onClick={handleStartEditPage}>Edit This Page</button>
+        </div>
+      )}
 
       {status && (
         <div className="status" role="status" aria-live="polite">

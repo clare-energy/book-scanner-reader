@@ -51,6 +51,7 @@ export default defineConfig({
       '/health': 'http://localhost:3000',
       '/auth': 'http://localhost:3000',
       '/books': 'http://localhost:3000',
+      '/pronunciations': 'http://localhost:3000',
     },
   },
 })

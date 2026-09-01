@@ -16,6 +16,7 @@ import { transcribePage } from "./ocr.js";
 import { pool, initSchema } from "./db.js";
 import { authRouter, requireAuth } from "./auth.js";
 import { booksRouter } from "./books.js";
+import { pronunciationsRouter } from "./pronunciations.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIST = path.join(__dirname, "../../frontend/dist");
@@ -53,6 +54,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/auth", authRouter);
 app.use("/books", requireAuth, booksRouter);
+app.use("/pronunciations", requireAuth, pronunciationsRouter);
 
 app.post("/ocr", requireAuth, upload.single("image"), async (req, res) => {
   if (!req.file) {
@@ -77,7 +79,7 @@ app.post("/ocr", requireAuth, upload.single("image"), async (req, res) => {
 
 // Serve the built PWA and support client-side routing.
 app.use(express.static(FRONTEND_DIST));
-app.get(/^(?!\/(ocr|health|auth|books)).*/, (_req, res) => {
+app.get(/^(?!\/(ocr|health|auth|books|pronunciations)).*/, (_req, res) => {
   res.sendFile(path.join(FRONTEND_DIST, "index.html"), (err) => {
     if (err) {
       res.status(503).send("Frontend build not found. Run the frontend build before starting the server.");
@@ -92,7 +94,10 @@ app.get(/^(?!\/(ocr|health|auth|books)).*/, (_req, res) => {
 app.use((err, _req, res, _next) => {
   console.error("Unhandled error:", err);
   if (err?.code === "LIMIT_FILE_SIZE") {
-    return res.status(413).json({ error: "Photo is too large. Try again, or lower your camera resolution." });
+    const message = req.path.startsWith("/pronunciations")
+      ? "That file is too large."
+      : "Photo is too large. Try again, or lower your camera resolution.";
+    return res.status(413).json({ error: message });
   }
   res.status(500).json({ error: "Unexpected server error, please retry." });
 });

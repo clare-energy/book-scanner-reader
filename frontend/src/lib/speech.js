@@ -80,19 +80,78 @@ function segmentPhrases(text) {
   return phrases
 }
 
+function stripDiacritics(str) {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+/**
+ * Builds a single-pass matcher for a user's pronunciation dictionary, so
+ * applying it to a phrase costs one regex scan rather than one scan per
+ * dictionary entry. Matching is diacritic- and case-insensitive (both the
+ * dictionary keys and the search text are compared in stripped-lowercased
+ * form) so "Dún Laoghaire" and "Dun Laoghaire" hit the same entry, while the
+ * replacement text and everywhere else the original text is used stay
+ * untouched. Longest terms are tried first so a multi-word entry isn't
+ * shadowed by a shorter overlapping one.
+ */
+export function buildPronunciationMatcher(entries) {
+  if (!entries?.length) return null
+  const sorted = [...entries].sort((a, b) => b.term.length - a.term.length)
+  const lookup = new Map()
+  const patterns = []
+  for (const { term, pronunciation } of sorted) {
+    const key = stripDiacritics(term).toLowerCase()
+    if (!key || lookup.has(key)) continue
+    lookup.set(key, pronunciation)
+    patterns.push(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  }
+  if (!patterns.length) return null
+  return { regex: new RegExp(`\\b(?:${patterns.join('|')})\\b`, 'g'), lookup }
+}
+
+/**
+ * Applies a pronunciation matcher to one phrase. Matching runs against a
+ * diacritic-stripped, lowercased copy of the text (same length as the
+ * original, since stripping a combining mark always collapses one
+ * precomposed accented character back to one base character) so the match
+ * span's index lines up with the original string, which is what actually
+ * gets sliced and replaced.
+ */
+export function applyPronunciations(text, matcher) {
+  if (!matcher) return text
+  const normalized = stripDiacritics(text).toLowerCase()
+  if (normalized.length !== text.length) return text
+  let result = ''
+  let lastIndex = 0
+  for (const match of normalized.matchAll(matcher.regex)) {
+    const start = match.index
+    const end = start + match[0].length
+    result += text.slice(lastIndex, start) + matcher.lookup.get(match[0])
+    lastIndex = end
+  }
+  return result + text.slice(lastIndex)
+}
+
 /**
  * Flatten a book's chapters into per-chapter phrase lists, keeping track of
  * which flattened phrase index each scanned page starts at (pageStarts) so
- * the Reader can jump between physical pages, not just phrases.
+ * the Reader can jump between physical pages, not just phrases. Pronunciation
+ * substitution and abbreviation normalization both run here, once per phrase
+ * at build time, rather than at speak time — that build only happens once
+ * per book-open (or after an edit), so this avoids re-scanning the same
+ * phrase's text on every replay.
  */
-export function buildPhraseIndex(book) {
+export function buildPhraseIndex(book, pronunciationEntries = []) {
+  const matcher = buildPronunciationMatcher(pronunciationEntries)
   return book.chapters.map((chapter) => {
     const phrases = []
     const pageStarts = []
     for (const page of chapter.pages) {
       pageStarts.push(phrases.length)
       for (const paragraph of page) {
-        phrases.push(...segmentPhrases(paragraph))
+        for (const phrase of segmentPhrases(paragraph)) {
+          phrases.push(normalizeForSpeech(applyPronunciations(phrase, matcher)))
+        }
       }
     }
     return { phrases, pageStarts }
@@ -179,7 +238,9 @@ export class PlaybackController {
     }
     window.speechSynthesis.cancel()
     const token = ++this._playToken
-    const utterance = new SpeechSynthesisUtterance(normalizeForSpeech(text))
+    // text is already normalized + pronunciation-substituted — that all
+    // happens once in buildPhraseIndex(), not per utterance/replay here.
+    const utterance = new SpeechSynthesisUtterance(text)
     // Cancelling the previous utterance (below, and on next/previous/pause)
     // fires ITS onend/onerror asynchronously. Without the token guard, that
     // stale event would trigger a second, spurious _advanceOrFinish() on
@@ -251,6 +312,18 @@ export class PlaybackController {
     }
     this._notifyPosition()
     if (this.isPlaying) this._speakCurrent()
+  }
+
+  /**
+   * Swap in freshly rebuilt phrase data (e.g. after a page's text was hand-
+   * edited), clamping the current position so it stays valid even if the
+   * edit changed the phrase count. Callers should follow up with seek() to
+   * land somewhere meaningful rather than relying on the clamp alone.
+   */
+  updatePhrases(phrasesByChapter) {
+    this.phrasesByChapter = phrasesByChapter
+    this.chapterIndex = clamp(this.chapterIndex, 0, this.phrasesByChapter.length - 1)
+    this.phraseIndex = clamp(this.phraseIndex, 0, this._chapterLength(this.chapterIndex) - 1)
   }
 
   /** Jump straight to a given chapter + phrase (e.g. from page navigation). */

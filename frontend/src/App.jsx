@@ -4,6 +4,7 @@ import Login from './pages/Login.jsx'
 import Library from './pages/Library.jsx'
 import ScanMode from './pages/ScanMode.jsx'
 import Reader from './pages/Reader.jsx'
+import PronunciationDictionary from './pages/PronunciationDictionary.jsx'
 
 function RequireAuth({ children }) {
   const { user, checking } = useAuth()
@@ -51,6 +52,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <Reader />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pronunciations"
+        element={
+          <RequireAuth>
+            <PronunciationDictionary />
           </RequireAuth>
         }
       />

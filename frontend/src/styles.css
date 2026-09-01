@@ -180,6 +180,18 @@ button:disabled {
   color: var(--fg);
 }
 
+.page-editor textarea {
+  font-size: 1.1rem;
+  font-family: inherit;
+  padding: 0.6rem;
+  border-radius: 0.5rem;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  width: 100%;
+  resize: vertical;
+}
+
 .top-bar {
   display: flex;
   align-items: center;

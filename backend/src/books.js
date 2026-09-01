@@ -6,10 +6,12 @@ import {
   renameBook,
   deleteBook,
   appendPage,
+  updatePageText,
   startNewChapter,
   setLastRead,
   setBookmark,
   getBookTitleAndChapters,
+  listPronunciationsForUser,
 } from "./db.js";
 import { buildEpub } from "./epub.js";
 
@@ -52,6 +54,21 @@ booksRouter.post("/:id/pages", async (req, res) => {
   res.json(book);
 });
 
+booksRouter.put("/:id/chapters/:chapterIndex/pages/:pageIndex", async (req, res) => {
+  const chapterIndex = Number(req.params.chapterIndex);
+  const pageIndex = Number(req.params.pageIndex);
+  const text = req.body?.text;
+  if (!Number.isInteger(chapterIndex) || !Number.isInteger(pageIndex)) {
+    return res.status(400).json({ error: "chapterIndex and pageIndex must be integers" });
+  }
+  if (typeof text !== "string") {
+    return res.status(400).json({ error: "No text provided" });
+  }
+  const book = await updatePageText(req.session.userId, req.params.id, chapterIndex, pageIndex, text);
+  if (!book) return res.status(404).json({ error: "Book or page not found" });
+  res.json(book);
+});
+
 booksRouter.post("/:id/chapters", async (req, res) => {
   const book = await startNewChapter(req.session.userId, req.params.id);
   if (!book) return res.status(404).json({ error: "Book not found" });
@@ -82,7 +99,8 @@ booksRouter.get("/:id/epub", async (req, res) => {
   const book = await getBookTitleAndChapters(req.session.userId, req.params.id);
   if (!book) return res.status(404).json({ error: "Book not found" });
 
-  const buffer = await buildEpub(book);
+  const pronunciationEntries = await listPronunciationsForUser(req.session.userId);
+  const buffer = await buildEpub(book, pronunciationEntries);
   res.set({
     "Content-Type": "application/epub+zip",
     "Content-Disposition": `attachment; filename="${book.title.replace(/[^\w\- ]/g, "")}.epub"`,
